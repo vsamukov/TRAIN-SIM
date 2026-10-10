@@ -1,0 +1,6 @@
+{
+  "name": "IronRail - Train Driver Simulator",
+  "description": "Realistic railway simulator featuring authentic train inertia, throttle and brake controls, scenic curves, semaphores, stations with passenger boarding, speed limits, and penalty enforcement.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
