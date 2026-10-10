@@ -4,6 +4,20 @@ export type SemaphoreAspect = 'green' | 'yellow' | 'red';
 
 export type CameraView = 'cab' | 'chase' | 'trackside';
 
+export type HeadlightMode = 'off' | 'low' | 'high';
+
+export type WiperMode = 'off' | 'intermittent' | 'high';
+
+export interface WeatherZone {
+  startDistance: number;
+  endDistance: number;
+  weather: WeatherType;
+  name: string;
+  warningNotice?: string;
+  requiresWipers?: boolean;
+  requiresHeadlights?: boolean;
+}
+
 export interface StationData {
   id: string;
   name: string;

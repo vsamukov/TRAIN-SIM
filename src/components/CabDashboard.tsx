@@ -1,5 +1,4 @@
-import React from 'react';
-import { TrainPhysicsState, WeatherType } from '../types/game';
+import { TrainPhysicsState, WeatherType, HeadlightMode, WiperMode } from '../types/game';
 import { MechanicalLever } from './MechanicalLever';
 import {
   Volume2,
@@ -15,16 +14,17 @@ interface CabDashboardProps {
   physics: TrainPhysicsState;
   speedLimitKmh: number;
   weather: WeatherType;
-  wipersActive: boolean;
-  headlightsOn: boolean;
+  wiperMode: WiperMode;
+  headlightMode: HeadlightMode;
+  windshieldMoisture: number;
   hornActive: boolean;
   isMuted: boolean;
   onSetThrottle: (val: number) => void;
   onSetBrake: (val: number) => void;
   onToggleReverser: () => void;
   onEmergencyBrake: () => void;
-  onToggleWipers: () => void;
-  onToggleHeadlights: () => void;
+  onCycleWipers: () => void;
+  onCycleHeadlights: () => void;
   onStartHorn: () => void;
   onStopHorn: () => void;
   onToggleMute: () => void;
@@ -35,16 +35,17 @@ export const CabDashboard: React.FC<CabDashboardProps> = ({
   physics,
   speedLimitKmh,
   weather,
-  wipersActive,
-  headlightsOn,
+  wiperMode,
+  headlightMode,
+  windshieldMoisture,
   hornActive,
   isMuted,
   onSetThrottle,
   onSetBrake,
   onToggleReverser,
   onEmergencyBrake,
-  onToggleWipers,
-  onToggleHeadlights,
+  onCycleWipers,
+  onCycleHeadlights,
   onStartHorn,
   onStopHorn,
   onToggleMute,
@@ -210,27 +211,51 @@ export const CabDashboard: React.FC<CabDashboardProps> = ({
               </button>
 
               <button
-                onClick={onToggleWipers}
-                className={`py-1.5 px-2 rounded-lg text-xs font-semibold border transition-colors ${
-                  wipersActive
-                    ? 'bg-cyan-950/60 border-cyan-500 text-cyan-300'
+                onClick={onCycleWipers}
+                className={`py-1.5 px-1.5 rounded-lg text-[11px] font-semibold border transition-colors truncate ${
+                  wiperMode === 'high'
+                    ? 'bg-cyan-900 border-cyan-400 text-cyan-200 shadow-[0_0_8px_rgba(6,182,212,0.4)]'
+                    : wiperMode === 'intermittent'
+                    ? 'bg-cyan-950/70 border-cyan-600 text-cyan-300'
                     : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
                 }`}
+                title="Wiper Mode: OFF / INTERMITTENT / HIGH [P]"
               >
-                Wipers {wipersActive ? 'ON' : 'OFF'}
+                Wipers: {wiperMode === 'intermittent' ? 'INT' : wiperMode.toUpperCase()}
               </button>
 
               <button
-                onClick={onToggleHeadlights}
-                className={`py-1.5 px-2 rounded-lg text-xs font-semibold border transition-colors ${
-                  headlightsOn
-                    ? 'bg-amber-950/60 border-amber-500 text-amber-300'
+                onClick={onCycleHeadlights}
+                className={`py-1.5 px-1.5 rounded-lg text-[11px] font-semibold border transition-colors truncate ${
+                  headlightMode === 'high'
+                    ? 'bg-amber-900 border-amber-300 text-amber-200 shadow-[0_0_8px_rgba(251,191,36,0.5)]'
+                    : headlightMode === 'low'
+                    ? 'bg-amber-950/70 border-amber-500 text-amber-300'
                     : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
                 }`}
+                title="Headlight Intensity: OFF / LOW BEAM / HIGH BEAM [L]"
               >
-                Lights {headlightsOn ? 'ON' : 'OFF'}
+                Lights: {headlightMode.toUpperCase()}
               </button>
             </div>
+
+            {/* Windshield Moisture Alert Bar if raining/snowing */}
+            {windshieldMoisture > 8 && (
+              <div className="flex items-center justify-between text-[10px] font-mono px-1 py-0.5 bg-slate-950/70 rounded border border-slate-800">
+                <span className="text-slate-400">Glass Moisture:</span>
+                <span
+                  className={`font-bold tabular-nums ${
+                    windshieldMoisture > 60
+                      ? 'text-rose-400 animate-pulse'
+                      : windshieldMoisture > 30
+                      ? 'text-amber-400'
+                      : 'text-cyan-400'
+                  }`}
+                >
+                  {Math.round(windshieldMoisture)}% {windshieldMoisture > 60 ? '· BLURRED!' : ''}
+                </span>
+              </div>
+            )}
 
             {/* Horn and Emergency Mushroom */}
             <div className="grid grid-cols-2 gap-1.5">

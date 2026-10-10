@@ -8,6 +8,8 @@ import {
   TrainPhysicsState,
   WeatherType,
   CameraView,
+  HeadlightMode,
+  WiperMode,
   ViolationRecord,
   GameStats,
   StationStopProgress,
@@ -22,6 +24,7 @@ import {
   getNextSemaphore,
   getNextStation,
   getCurrentGradient,
+  getWeatherZoneAtDistance,
 } from './utils/trackData';
 import { updateTrainPhysics } from './utils/physics';
 import { soundEngine } from './utils/audio';
@@ -69,10 +72,28 @@ export default function App() {
   // Environmental & Cab Controls
   const [weather, setWeather] = useState<WeatherType>('clear');
   const [cameraView, setCameraView] = useState<CameraView>('cab');
-  const [wipersActive, setWipersActive] = useState<boolean>(false);
-  const [headlightsOn, setHeadlightsOn] = useState<boolean>(true);
+  const [headlightMode, setHeadlightMode] = useState<HeadlightMode>('low');
+  const [wiperMode, setWiperMode] = useState<WiperMode>('off');
+  const [windshieldMoisture, setWindshieldMoisture] = useState<number>(0);
+  const [weatherAlert, setWeatherAlert] = useState<string | null>(null);
   const [hornActive, setHornActive] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
+
+  // Real-time refs for 60fps simulation loop
+  const weatherRef = useRef<WeatherType>('clear');
+  weatherRef.current = weather;
+  const headlightModeRef = useRef<HeadlightMode>('low');
+  headlightModeRef.current = headlightMode;
+  const wiperModeRef = useRef<WiperMode>('off');
+  wiperModeRef.current = wiperMode;
+  const windshieldMoistureRef = useRef<number>(0);
+  windshieldMoistureRef.current = windshieldMoisture;
+
+  const manualWeatherOverrideRef = useRef<boolean>(false);
+  const currentWeatherZoneRef = useRef<string>('Meadow Valley Clear');
+  const wiperAudioTimerRef = useRef<number>(0);
+  const unlitFogTimerRef = useRef<number>(0);
+  const blurredGlassTimerRef = useRef<number>(0);
 
   // Station Docking & Boarding Progress
   const [activeStationStop, setActiveStationStop] = useState<StationStopProgress | null>(null);
@@ -153,12 +174,99 @@ export default function App() {
 
       if (!isGameOver && !isVictory) {
         setPhysics((prev) => {
-          const next = updateTrainPhysics(prev, dt, weather);
+          const next = updateTrainPhysics(prev, dt, weatherRef.current);
 
           // Update audio sound engine
           soundEngine.updateEngine(next.speedKmh, next.actualThrottle);
           soundEngine.triggerRailClick(next.speedKmh);
           soundEngine.updateBrakeSqueal(next.brakePercent, next.speedKmh);
+
+          // Check Dynamic Route Weather Zone Progression
+          if (!manualWeatherOverrideRef.current) {
+            const currentZone = getWeatherZoneAtDistance(next.distanceMeters);
+            if (currentZone.name !== currentWeatherZoneRef.current) {
+              currentWeatherZoneRef.current = currentZone.name;
+              setWeather(currentZone.weather);
+              soundEngine.updateRainSound(currentZone.weather === 'rain');
+              if (currentZone.warningNotice) {
+                setWeatherAlert(currentZone.warningNotice);
+              }
+            }
+          }
+
+          // Dynamic Windshield Moisture Accumulation & Wiper Clearing
+          const curW = weatherRef.current;
+          const curWiper = wiperModeRef.current;
+          const curHeadlight = headlightModeRef.current;
+
+          let moistureDelta = 0;
+          if (curW === 'rain') {
+            moistureDelta = 24; // Rapid rainwater accumulation
+          } else if (curW === 'snow') {
+            moistureDelta = 18; // Snow buildup on glass
+          } else {
+            moistureDelta = -12; // Natural air drying
+          }
+
+          if (curWiper === 'high') {
+            moistureDelta -= 52; // High-speed wipers wipe glass clear quickly
+          } else if (curWiper === 'intermittent') {
+            moistureDelta -= 26; // Intermittent keeps moisture around 10-20%
+          }
+
+          setWindshieldMoisture((prevM) => Math.max(0, Math.min(100, prevM + moistureDelta * dt)));
+
+          // Periodic Wiper Sweep Audio
+          if (curWiper === 'high') {
+            wiperAudioTimerRef.current += dt;
+            if (wiperAudioTimerRef.current >= 0.72) {
+              wiperAudioTimerRef.current = 0;
+              soundEngine.playWiperSwipe();
+            }
+          } else if (curWiper === 'intermittent') {
+            wiperAudioTimerRef.current += dt;
+            if (wiperAudioTimerRef.current >= 2.4) {
+              wiperAudioTimerRef.current = 0;
+              soundEngine.playWiperSwipe();
+            }
+          } else {
+            wiperAudioTimerRef.current = 0;
+          }
+
+          // Safety Violations for Impaired Weather Visibility
+          if (
+            (curW === 'rain' || curW === 'snow') &&
+            curWiper === 'off' &&
+            Math.abs(next.speedKmh) > 35
+          ) {
+            blurredGlassTimerRef.current += dt;
+            if (blurredGlassTimerRef.current > 8.0) {
+              blurredGlassTimerRef.current = 0;
+              recordViolation(
+                'speeding',
+                'Visibility Violation: High-speed running with obscured windshield! Turn on wipers [P].',
+                1,
+                next.distanceMeters / 1000
+              );
+            }
+          } else {
+            blurredGlassTimerRef.current = Math.max(0, blurredGlassTimerRef.current - dt * 2);
+          }
+
+          if (curW === 'fog' && curHeadlight === 'off' && Math.abs(next.speedKmh) > 35) {
+            unlitFogTimerRef.current += dt;
+            if (unlitFogTimerRef.current > 8.0) {
+              unlitFogTimerRef.current = 0;
+              recordViolation(
+                'speeding',
+                'Visibility Violation: Running blind through dense fog without headlights! Engage high beams [L].',
+                1,
+                next.distanceMeters / 1000
+              );
+            }
+          } else {
+            unlitFogTimerRef.current = Math.max(0, unlitFogTimerRef.current - dt * 2);
+          }
 
           // Check Speed Limit Violations
           const currentLimit = getCurrentSpeedLimit(next.distanceMeters);
@@ -201,8 +309,8 @@ export default function App() {
 
             // Approaching station: check if train stops inside platform target zone
             if (
-              Math.abs(distDiff) <= 22 &&
-              Math.abs(next.speedKmh) <= 0.6 &&
+              Math.abs(distDiff) <= 30 &&
+              Math.abs(next.speedKmh) <= 1.2 &&
               !servicedStationsRef.current.has(station.id) &&
               !activeStationStop
             ) {
@@ -221,7 +329,7 @@ export default function App() {
 
             // Missed station violation: blowing past without stopping
             if (
-              distDiff < -40 &&
+              distDiff < -65 &&
               !servicedStationsRef.current.has(station.id) &&
               !missedStationsRef.current.has(station.id)
             ) {
@@ -256,7 +364,7 @@ export default function App() {
 
     animId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animId);
-  }, [weather, isGameOver, isVictory, activeStationStop, recordViolation]);
+  }, [isGameOver, isVictory, activeStationStop, recordViolation]);
 
   // Handle passenger boarding progress interval
   useEffect(() => {
@@ -316,6 +424,16 @@ export default function App() {
     setIsGameOver(false);
     setIsVictory(false);
     setActiveStationStop(null);
+    setWeather('clear');
+    setHeadlightMode('low');
+    setWiperMode('off');
+    setWindshieldMoisture(0);
+    setWeatherAlert(null);
+    manualWeatherOverrideRef.current = false;
+    currentWeatherZoneRef.current = 'Meadow Valley Clear';
+    wiperAudioTimerRef.current = 0;
+    unlitFogTimerRef.current = 0;
+    blurredGlassTimerRef.current = 0;
     servicedStationsRef.current.clear();
     missedStationsRef.current.clear();
     passedRedSignalsRef.current.clear();
@@ -374,15 +492,16 @@ export default function App() {
     }));
   }, [initAudio]);
 
-  const handleToggleWipers = useCallback(() => {
+  const handleCycleWipers = useCallback(() => {
     initAudio();
     soundEngine.playWiperSwipe();
-    setWipersActive((prev) => !prev);
+    setWiperMode((prev) => (prev === 'off' ? 'intermittent' : prev === 'intermittent' ? 'high' : 'off'));
   }, [initAudio]);
 
-  const handleToggleHeadlights = useCallback(() => {
+  const handleCycleHeadlights = useCallback(() => {
     initAudio();
-    setHeadlightsOn((prev) => !prev);
+    soundEngine.playLeverClick();
+    setHeadlightMode((prev) => (prev === 'off' ? 'low' : prev === 'low' ? 'high' : 'off'));
   }, [initAudio]);
 
   const handleStartHorn = useCallback(() => {
@@ -405,10 +524,15 @@ export default function App() {
 
   const handleChangeWeather = useCallback((newWeather: WeatherType) => {
     initAudio();
+    manualWeatherOverrideRef.current = true;
     setWeather(newWeather);
     soundEngine.updateRainSound(newWeather === 'rain');
     if (newWeather === 'rain' || newWeather === 'snow') {
-      setWipersActive(true);
+      setWeatherAlert(`Weather manually set to ${newWeather.toUpperCase()}. Manage wipers & lights!`);
+    } else if (newWeather === 'fog') {
+      setWeatherAlert('Weather manually set to DENSE FOG. High-beam headlights recommended!');
+    } else {
+      setWeatherAlert(`Weather set to ${newWeather.toUpperCase()}.`);
     }
   }, [initAudio]);
 
@@ -458,11 +582,11 @@ export default function App() {
           break;
         case 'KeyP':
           e.preventDefault();
-          handleToggleWipers();
+          handleCycleWipers();
           break;
         case 'KeyL':
           e.preventDefault();
-          handleToggleHeadlights();
+          handleCycleHeadlights();
           break;
         case 'KeyC':
           e.preventDefault();
@@ -493,8 +617,8 @@ export default function App() {
     handleStartHorn,
     handleStopHorn,
     handleEmergencyBrake,
-    handleToggleWipers,
-    handleToggleHeadlights,
+    handleCycleWipers,
+    handleCycleHeadlights,
     handleToggleMute,
   ]);
 
@@ -518,6 +642,11 @@ export default function App() {
         nextSemaphore={nextSemaphore}
         cameraView={cameraView}
         gradientPercent={currentGrade}
+        weather={weather}
+        weatherAlert={weatherAlert}
+        headlightMode={headlightMode}
+        wiperMode={wiperMode}
+        windshieldMoisture={windshieldMoisture}
         onSetCameraView={setCameraView}
         onOpenHelp={() => setShowTutorial(true)}
         onRestart={handleRestart}
@@ -535,8 +664,9 @@ export default function App() {
           physics={physics}
           weather={weather}
           cameraView={cameraView}
-          wipersActive={wipersActive}
-          headlightsOn={headlightsOn}
+          wiperMode={wiperMode}
+          headlightMode={headlightMode}
+          windshieldMoisture={windshieldMoisture}
           hornActive={hornActive}
           activeStationStop={activeStationStop}
         />
@@ -555,16 +685,17 @@ export default function App() {
         physics={physics}
         speedLimitKmh={currentSpeedLimit}
         weather={weather}
-        wipersActive={wipersActive}
-        headlightsOn={headlightsOn}
+        wiperMode={wiperMode}
+        headlightMode={headlightMode}
+        windshieldMoisture={windshieldMoisture}
         hornActive={hornActive}
         isMuted={isMuted}
         onSetThrottle={handleSetThrottle}
         onSetBrake={handleSetBrake}
         onToggleReverser={handleToggleReverser}
         onEmergencyBrake={handleEmergencyBrake}
-        onToggleWipers={handleToggleWipers}
-        onToggleHeadlights={handleToggleHeadlights}
+        onCycleWipers={handleCycleWipers}
+        onCycleHeadlights={handleCycleHeadlights}
         onStartHorn={handleStartHorn}
         onStopHorn={handleStopHorn}
         onToggleMute={handleToggleMute}

@@ -94,7 +94,24 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({ onClose }) => {
             </div>
           </div>
 
-          {/* SECTION 5: KEYBOARD SHORTCUTS */}
+          {/* SECTION 5: DYNAMIC WEATHER & VISIBILITY MANAGEMENT */}
+          <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-xl flex items-start gap-3">
+            <div className="p-2 bg-sky-950/60 border border-sky-800/80 rounded-lg shrink-0 text-sky-400">
+              <CloudRain className="w-4 h-4" />
+            </div>
+            <div>
+              <h4 className="font-semibold text-white text-sm mb-1">
+                Dynamic Weather & Visibility Management
+              </h4>
+              <p className="leading-relaxed text-slate-300">
+                Weather conditions dynamically shift as your train traverses Alpine valleys:
+                <strong className="text-cyan-300"> Rain & Snow:</strong> Water rapidly obscures the windshield glass. Cycle wipers (<kbd className="px-1 py-0.2 bg-slate-800 rounded text-cyan-300 font-mono">P</kbd>) to Intermittent or High to sweep the glass clear.
+                <strong className="text-amber-300"> Dense Fog & Twilight:</strong> Switch headlights (<kbd className="px-1 py-0.2 bg-slate-800 rounded text-amber-300 font-mono">L</kbd>) from Low to High Beam to cut through the thick mist and spot upcoming semaphore aspects!
+              </p>
+            </div>
+          </div>
+
+          {/* SECTION 6: KEYBOARD SHORTCUTS */}
           <div className="p-3.5 bg-slate-950/70 border border-slate-800 rounded-xl">
             <h4 className="font-semibold text-white text-xs mb-2 uppercase tracking-wider text-slate-400">
               Keyboard Controls
@@ -107,7 +124,9 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({ onClose }) => {
               <div><kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-white">H</kbd> : Two-Tone Horn</div>
               <div><kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-white">E</kbd> : Emergency Brake</div>
               <div><kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-white">C</kbd> : Cycle Camera View</div>
-              <div><kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-white">P</kbd> : Windshield Wipers</div>
+              <div><kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-cyan-300">P</kbd> : Cycle Wipers (Off / Int / High)</div>
+              <div><kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-amber-300">L</kbd> : Cycle Headlights (Off / Low / High)</div>
+              <div><kbd className="px-1.5 py-0.5 bg-slate-800 rounded text-white">M</kbd> : Mute / Unmute Sound</div>
             </div>
           </div>
         </div>

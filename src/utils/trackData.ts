@@ -5,6 +5,7 @@ import {
   SceneryFeature,
   CurveSection,
   GradientSection,
+  WeatherZone,
 } from '../types/game';
 
 export const TOTAL_ROUTE_METERS = 14500; // 14.5 km route
@@ -265,3 +266,61 @@ export function getNextStation(distanceMeters: number): { station: StationData; 
   }
   return null;
 }
+
+export const WEATHER_ZONES: WeatherZone[] = [
+  {
+    startDistance: 0,
+    endDistance: 2800,
+    weather: 'clear',
+    name: 'Meadow Valley Clear',
+    warningNotice: 'Clear conditions. Good visibility along line.',
+    requiresWipers: false,
+    requiresHeadlights: false,
+  },
+  {
+    startDistance: 2800,
+    endDistance: 5600,
+    weather: 'rain',
+    name: 'Pinecrest Rainstorm',
+    warningNotice: 'DISPATCH: Heavy rain in Pinecrest sector! Turn on wipers to clear windshield.',
+    requiresWipers: true,
+    requiresHeadlights: true,
+  },
+  {
+    startDistance: 5600,
+    endDistance: 8400,
+    weather: 'fog',
+    name: 'River Gorge Dense Fog',
+    warningNotice: 'DISPATCH: Dense valley fog over Viaduct! Switch headlights to HIGH BEAM to see signals.',
+    requiresWipers: false,
+    requiresHeadlights: true,
+  },
+  {
+    startDistance: 8400,
+    endDistance: 11000,
+    weather: 'sunset',
+    name: 'Bergstadt Twilight',
+    warningNotice: 'Twilight dusk falling. Low-beam headlights recommended for town approach.',
+    requiresWipers: false,
+    requiresHeadlights: true,
+  },
+  {
+    startDistance: 11000,
+    endDistance: 14500,
+    weather: 'snow',
+    name: 'Eagle Canyon Snowstorm',
+    warningNotice: 'DISPATCH: Alpine snowfall in Eagles Nest canyon! Wipers & headlights required.',
+    requiresWipers: true,
+    requiresHeadlights: true,
+  },
+];
+
+export function getWeatherZoneAtDistance(distanceMeters: number): WeatherZone {
+  for (const zone of WEATHER_ZONES) {
+    if (distanceMeters >= zone.startDistance && distanceMeters <= zone.endDistance) {
+      return zone;
+    }
+  }
+  return WEATHER_ZONES[0];
+}
+

@@ -1,10 +1,11 @@
-import React from 'react';
 import {
   CameraView,
   SemaphoreData,
   StationData,
   SpeedLimitSign,
   WeatherType,
+  HeadlightMode,
+  WiperMode,
 } from '../types/game';
 import {
   ShieldAlert,
@@ -12,8 +13,12 @@ import {
   Compass,
   HelpCircle,
   RotateCcw,
-  Flag,
-  Navigation,
+  CloudRain,
+  CloudFog,
+  Snowflake,
+  Sun,
+  Sunset,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface HUDProps {
@@ -25,6 +30,11 @@ interface HUDProps {
   nextSemaphore: { semaphore: SemaphoreData; distanceTo: number } | null;
   cameraView: CameraView;
   gradientPercent: number;
+  weather: WeatherType;
+  weatherAlert: string | null;
+  headlightMode: HeadlightMode;
+  wiperMode: WiperMode;
+  windshieldMoisture: number;
   onSetCameraView: (view: CameraView) => void;
   onOpenHelp: () => void;
   onRestart: () => void;
@@ -39,12 +49,21 @@ export const HUD: React.FC<HUDProps> = ({
   nextSemaphore,
   cameraView,
   gradientPercent,
+  weather,
+  weatherAlert,
+  headlightMode,
+  wiperMode,
+  windshieldMoisture,
   onSetCameraView,
   onOpenHelp,
   onRestart,
 }) => {
   const isOverSpeed = currentSpeedKmh > speedLimitKmh + 2;
   const isDangerZone = safetyPoints <= 3;
+
+  // Determine weather equipment warnings
+  const wipersNeeded = (weather === 'rain' || weather === 'snow') && wiperMode === 'off';
+  const highBeamNeeded = weather === 'fog' && headlightMode !== 'high';
 
   return (
     <header className="absolute top-0 inset-x-0 z-20 bg-slate-950/85 backdrop-blur-md border-b border-slate-800/80 px-4 py-2.5 select-none text-slate-200">
@@ -236,6 +255,66 @@ export const HUD: React.FC<HUDProps> = ({
           </button>
         </div>
       </div>
+
+      {/* DISPATCH RADIO WEATHER & VISIBILITY ADVISORY STRIP */}
+      {(weatherAlert || wipersNeeded || highBeamNeeded || windshieldMoisture > 50) && (
+        <div
+          className={`mt-2 -mx-4 -mb-2.5 px-4 py-1.5 text-xs font-mono flex items-center justify-between border-t transition-colors ${
+            windshieldMoisture > 65 || (weather === 'fog' && headlightMode === 'off')
+              ? 'bg-rose-950/90 border-rose-800 text-rose-200 animate-pulse'
+              : wipersNeeded || highBeamNeeded
+              ? 'bg-amber-950/85 border-amber-800 text-amber-200'
+              : 'bg-slate-900/90 border-slate-800 text-cyan-200'
+          }`}
+        >
+          <div className="max-w-7xl mx-auto w-full flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="font-bold tracking-wider uppercase text-[10px] px-1.5 py-0.5 rounded bg-black/50 text-amber-300">
+                DISPATCH RADIO
+              </span>
+              <span className="truncate">
+                {weatherAlert ||
+                  (wipersNeeded
+                    ? `Heavy precipitation! Glass moisture ${Math.round(windshieldMoisture)}% · Turn on wipers [P]`
+                    : highBeamNeeded
+                    ? `Dense fog ahead! Switch headlights to HIGH BEAM [L] to pierce fog`
+                    : `Reduced visibility: Windshield moisture ${Math.round(windshieldMoisture)}%`)}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-[11px] shrink-0 font-sans text-slate-300">
+              <span className="flex items-center gap-1">
+                Wipers:
+                <strong
+                  className={`font-mono px-1 py-0.5 rounded text-[10px] ${
+                    wipersNeeded
+                      ? 'bg-rose-900 text-rose-200 font-bold'
+                      : wiperMode === 'high'
+                      ? 'bg-cyan-900 text-cyan-200'
+                      : 'bg-slate-800 text-slate-300'
+                  }`}
+                >
+                  {wiperMode.toUpperCase()}
+                </strong>
+              </span>
+              <span className="flex items-center gap-1">
+                Lights:
+                <strong
+                  className={`font-mono px-1 py-0.5 rounded text-[10px] ${
+                    highBeamNeeded
+                      ? 'bg-amber-900 text-amber-200 font-bold'
+                      : headlightMode === 'high'
+                      ? 'bg-amber-800 text-amber-200'
+                      : 'bg-slate-800 text-slate-300'
+                  }`}
+                >
+                  {headlightMode.toUpperCase()}
+                </strong>
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 };
+

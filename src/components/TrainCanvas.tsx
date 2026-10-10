@@ -6,6 +6,8 @@ import {
   SemaphoreData,
   StationData,
   SpeedLimitSign,
+  HeadlightMode,
+  WiperMode,
 } from '../types/game';
 import {
   STATIONS,
@@ -18,8 +20,9 @@ interface TrainCanvasProps {
   physics: TrainPhysicsState;
   weather: WeatherType;
   cameraView: CameraView;
-  wipersActive: boolean;
-  headlightsOn: boolean;
+  wiperMode: WiperMode;
+  headlightMode: HeadlightMode;
+  windshieldMoisture: number; // 0 to 100%
   hornActive: boolean;
   activeStationStop: { station: StationData; isBoarding: boolean; boardingProgress: number } | null;
 }
@@ -28,8 +31,9 @@ export const TrainCanvas: React.FC<TrainCanvasProps> = ({
   physics,
   weather,
   cameraView,
-  wipersActive,
-  headlightsOn,
+  wiperMode,
+  headlightMode,
+  windshieldMoisture,
   hornActive,
   activeStationStop,
 }) => {
@@ -104,7 +108,7 @@ export const TrainCanvas: React.FC<TrainCanvasProps> = ({
       drawStreamingLandscape(ctx, width, height, scenery, physics.distanceMeters, physics.currentCurvature, weather, time);
 
       // 4. PERSPECTIVE RAILWAY TRACK, SLEEPERS, RAILS & INFRASTRUCTURE
-      drawTrackAndInfrastructure(ctx, width, height, physics, scenery, time, headlightsOn);
+      drawTrackAndInfrastructure(ctx, width, height, physics, scenery, time, headlightMode);
 
       // 5. SIGNALS, SEMAPHORES & SPEED LIMIT SIGNS
       drawTrackObjects(ctx, width, height, physics, time);
@@ -112,19 +116,19 @@ export const TrainCanvas: React.FC<TrainCanvasProps> = ({
       // 6. STATIONS & PASSENGERS
       drawStations(ctx, width, height, physics, activeStationStop);
 
-      // 7. WEATHER EFFECTS (Rain, Fog, Snow)
-      drawWeatherAmbiance(ctx, width, height, weather, time);
+      // 7. WEATHER EFFECTS (Rain, Fog, Snow) & HEADLIGHT VISIBILITY
+      drawWeatherAmbiance(ctx, width, height, weather, time, headlightMode);
 
       // 8. EXTERNAL TRAIN CARRIAGES (In Chase / Trackside view)
       if (cameraView === 'chase' || cameraView === 'trackside') {
-        drawExternalTrain(ctx, width, height, physics, time, headlightsOn, hornActive);
+        drawExternalTrain(ctx, width, height, physics, time, headlightMode, hornActive);
       }
 
       ctx.restore();
 
-      // 9. CABIN WINDSHIELD, WIPERS & OVERLAY (Only in Cab View)
+      // 9. CABIN WINDSHIELD, WIPERS & VISIBILITY DYNAMICS (Only in Cab View)
       if (cameraView === 'cab') {
-        drawCabWindshield(ctx, width, height, weather, wipersActive, time);
+        drawCabWindshield(ctx, width, height, weather, wiperMode, windshieldMoisture, time);
       }
 
       animationFrameId = requestAnimationFrame(render);
@@ -132,7 +136,7 @@ export const TrainCanvas: React.FC<TrainCanvasProps> = ({
 
     animationFrameId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [physics, weather, cameraView, wipersActive, headlightsOn, hornActive, activeStationStop]);
+  }, [physics, weather, cameraView, wiperMode, headlightMode, windshieldMoisture, hornActive, activeStationStop]);
 
   return (
     <div className="relative w-full h-full overflow-hidden bg-slate-950 select-none">
@@ -846,27 +850,43 @@ function drawTrackAndInfrastructure(
   physics: TrainPhysicsState,
   scenery: ReturnType<typeof getCurrentScenery>,
   time: number,
-  headlightsOn: boolean
+  headlightMode: HeadlightMode
 ) {
   const horizonY = h * 0.44;
   const cx = w * 0.5;
   const curve = physics.currentCurvature;
 
-  // Headlight illumination beam in front of train
-  if (headlightsOn) {
-    const lightGrad = ctx.createRadialGradient(cx, h, 60, cx + curve * 120, horizonY + 80, 540);
-    lightGrad.addColorStop(0, 'rgba(254, 240, 138, 0.48)');
-    lightGrad.addColorStop(0.5, 'rgba(254, 240, 138, 0.16)');
+  // Headlight illumination beam in front of train (Off, Low Beam, High Beam)
+  if (headlightMode !== 'off') {
+    const isHigh = headlightMode === 'high';
+    const beamReach = isHigh ? 640 : 360;
+    const beamRadius = isHigh ? 580 : 320;
+    const beamAlpha = isHigh ? 0.6 : 0.32;
+    const beamSpread = isHigh ? 230 : 150;
+
+    const lightGrad = ctx.createRadialGradient(cx, h, 50, cx + curve * 120, horizonY + (isHigh ? 60 : 120), beamRadius);
+    lightGrad.addColorStop(0, `rgba(254, 240, 138, ${beamAlpha})`);
+    lightGrad.addColorStop(0.45, `rgba(254, 240, 138, ${beamAlpha * 0.4})`);
     lightGrad.addColorStop(1, 'rgba(254, 240, 138, 0)');
 
     ctx.fillStyle = lightGrad;
     ctx.beginPath();
-    ctx.moveTo(cx - 200, h);
-    ctx.lineTo(cx + curve * 180 - 45, horizonY + 60);
-    ctx.lineTo(cx + curve * 180 + 45, horizonY + 60);
-    ctx.lineTo(cx + 200, h);
+    ctx.moveTo(cx - beamSpread, h);
+    ctx.lineTo(cx + curve * 180 - (isHigh ? 55 : 35), horizonY + (isHigh ? 45 : 90));
+    ctx.lineTo(cx + curve * 180 + (isHigh ? 55 : 35), horizonY + (isHigh ? 45 : 90));
+    ctx.lineTo(cx + beamSpread, h);
     ctx.closePath();
     ctx.fill();
+
+    // High-beam extra long piercing focal beam
+    if (isHigh) {
+      const coreGrad = ctx.createRadialGradient(cx, h, 20, cx + curve * 180, horizonY + 50, 480);
+      coreGrad.addColorStop(0, 'rgba(255, 255, 255, 0.45)');
+      coreGrad.addColorStop(0.5, 'rgba(254, 240, 138, 0.15)');
+      coreGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = coreGrad;
+      ctx.fillRect(cx - 100, horizonY + 40, 200, h - horizonY);
+    }
   }
 
   // 1. BALLAST GRAVEL BED
@@ -1176,68 +1196,446 @@ function drawStations(
   const cx = w * 0.5;
 
   STATIONS.forEach((station) => {
-    const distTo = station.distanceMeters - physics.distanceMeters;
-    if (distTo > -80 && distTo < 480) {
-      const z = Math.max(0.05, 1 - distTo / 480);
+    const centerDistTo = station.distanceMeters - physics.distanceMeters;
+
+    // Station is visible if anywhere along its 260m length is within 650m ahead or 140m behind
+    if (centerDistTo < -140 || centerDistTo > 680) return;
+
+    // 1. ADVANCE STATION WARNING BOARDS (350m and 180m ahead)
+    const sign1Dist = centerDistTo - 350;
+    if (sign1Dist > 5 && sign1Dist < 360) {
+      drawAdvanceStationSign(ctx, w, h, horizonY, cx, physics.currentCurvature, sign1Dist, station.name, 350);
+    }
+
+    // 2. CONTINUOUS 240-METER RAISED PLATFORMS & CANOPIES (Multi-bay sampling)
+    // We sample platform sections from far end (+120m) to near end (-120m)
+    const platformHalfLength = 120;
+    const segmentStep = 20; // 20m sections along track
+
+    // Collect visible platform segments sorted from far to near for correct z-depth
+    for (let offset = platformHalfLength; offset >= -platformHalfLength; offset -= segmentStep) {
+      const segWorldDist = station.distanceMeters + offset;
+      const segDistTo = segWorldDist - physics.distanceMeters;
+
+      if (segDistTo <= 4 || segDistTo > 640) continue;
+
+      const z = 1 - segDistTo / 640;
       const scale = Math.pow(z, 2.3);
       const groundY = horizonY + (h - horizonY) * scale;
-      const platX = cx + physics.currentCurvature * (1 - z) * 180 + (220 * scale);
+      const curveOffset = physics.currentCurvature * (1 - z) * 180;
 
-      const platW = 160 * scale;
-      const platH = 28 * scale;
+      // Platform coordinate on right side
+      const rightPlatX = cx + curveOffset + (195 * scale);
+      // Secondary platform coordinate on left side
+      const leftPlatX = cx + curveOffset - (195 * scale);
 
-      // Platform concrete deck
-      ctx.fillStyle = '#64748b';
-      ctx.fillRect(platX, groundY - platH, platW, platH);
+      const segWidth = 145 * scale;
+      const segHeight = Math.max(3, 24 * scale);
 
-      // Yellow safety edge strip
+      // A. RIGHT PLATFORM CONCRETE SLAB
+      ctx.fillStyle = '#64748b'; // Platform deck
+      ctx.fillRect(rightPlatX, groundY - segHeight, segWidth, segHeight);
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = Math.max(1, 2 * scale);
+      ctx.strokeRect(rightPlatX, groundY - segHeight, segWidth, segHeight);
+
+      // Yellow tactile safety curb strip
       ctx.fillStyle = '#f59e0b';
-      ctx.fillRect(platX, groundY - platH, 12 * scale, platH);
+      ctx.fillRect(rightPlatX, groundY - segHeight, 14 * scale, segHeight);
 
-      // Canopy roof
-      ctx.fillStyle = '#334155';
-      ctx.fillRect(platX + 20 * scale, groundY - platH - 70 * scale, platW - 10 * scale, 12 * scale);
+      // B. LEFT PLATFORM CONCRETE SLAB
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(leftPlatX - segWidth, groundY - segHeight, segWidth, segHeight);
+      ctx.strokeRect(leftPlatX - segWidth, groundY - segHeight, segWidth, segHeight);
+      // Yellow tactile strip on left platform edge facing rails
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(leftPlatX - 14 * scale, groundY - segHeight, 14 * scale, segHeight);
 
-      // Station Name board
-      if (scale > 0.35) {
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(platX + 20 * scale, groundY - platH - 95 * scale, 110 * scale, 22 * scale);
-        ctx.fillStyle = '#f8fafc';
-        ctx.font = `bold ${Math.max(7, 10 * scale)}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.fillText(station.name, platX + 75 * scale, groundY - platH - 80 * scale);
+      // C. MULTI-BAY VAULTED CANOPY (Covering central 160m from -80 to +80)
+      if (Math.abs(offset) <= 80 && scale > 0.12) {
+        drawPlatformCanopyBay(ctx, rightPlatX, groundY - segHeight, segWidth, scale);
       }
 
-      // CRITICAL PASSENGER STOPPING TARGET BOX
-      const stopOffset = station.distanceMeters - physics.distanceMeters;
-      if (Math.abs(stopOffset) < 120) {
-        const markerScale = Math.min(1.2, scale * 1.3);
-        const stopMarkerX = cx + 180 * scale;
-        const stopMarkerY = groundY - 45 * scale;
-
-        ctx.fillStyle = '#eab308';
-        ctx.beginPath();
-        ctx.moveTo(stopMarkerX, stopMarkerY - 18 * markerScale);
-        ctx.lineTo(stopMarkerX + 18 * markerScale, stopMarkerY);
-        ctx.lineTo(stopMarkerX, stopMarkerY + 18 * markerScale);
-        ctx.lineTo(stopMarkerX - 18 * markerScale, stopMarkerY);
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = '#0f172a';
-        ctx.lineWidth = 3;
-        ctx.stroke();
-
-        ctx.fillStyle = '#0f172a';
-        ctx.font = `900 ${Math.max(8, 11 * markerScale)}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('STOP', stopMarkerX, stopMarkerY);
+      // D. PLATFORM AMBER GLOBE LANTERNS (Every 40m)
+      if (Math.abs(offset % 40) < 5 && scale > 0.15) {
+        drawPlatformLantern(ctx, rightPlatX + 35 * scale, groundY - segHeight, scale);
+        drawPlatformLantern(ctx, leftPlatX - 35 * scale, groundY - segHeight, scale);
       }
 
-      // Waiting passengers
-      drawPlatformPassengers(ctx, platX + 30 * scale, groundY - platH, station.passengersWaiting, scale);
+      // E. PASSENGER BENCHES & LUGGAGE CARTS (At specific offsets)
+      if (offset === 40 && scale > 0.2) {
+        drawLuggageCart(ctx, rightPlatX + 60 * scale, groundY - segHeight, scale);
+      }
+      if (offset === -40 && scale > 0.2) {
+        drawPlatformBench(ctx, rightPlatX + 70 * scale, groundY - segHeight, scale);
+      }
+
+      // F. PASSENGER GROUPS DISTRIBUTED ALONG PLATFORM
+      if (Math.abs(offset) <= 90 && Math.abs(offset % 30) < 5 && scale > 0.18) {
+        const groupCount = 3 + Math.floor(Math.abs(Math.sin(offset)) * 5);
+        drawPlatformPassengers(ctx, rightPlatX + 25 * scale, groundY - segHeight, groupCount, scale);
+      }
+    }
+
+    // 3. GRAND MAIN STATION TERMINAL BUILDING (Located at station center offset -10m)
+    const depotDistTo = (station.distanceMeters - 10) - physics.distanceMeters;
+    if (depotDistTo > 6 && depotDistTo < 600) {
+      const z = 1 - depotDistTo / 600;
+      const scale = Math.pow(z, 2.3);
+      const groundY = horizonY + (h - horizonY) * scale;
+      const curveOffset = physics.currentCurvature * (1 - z) * 180;
+      const depotX = cx + curveOffset + (320 * scale);
+
+      drawGrandStationBuilding(ctx, depotX, groundY, scale, station.name, station.sceneryType);
+    }
+
+    // 4. OVERHEAD PEDESTRIAN FOOTBRIDGE (Spans across tracks at offset -35m)
+    const bridgeDistTo = (station.distanceMeters - 35) - physics.distanceMeters;
+    if (bridgeDistTo > 8 && bridgeDistTo < 520) {
+      const z = 1 - bridgeDistTo / 520;
+      const scale = Math.pow(z, 2.3);
+      const groundY = horizonY + (h - horizonY) * scale;
+      const curveOffset = physics.currentCurvature * (1 - z) * 180;
+      const trackMidX = cx + curveOffset;
+
+      drawPedestrianFootbridge(ctx, trackMidX, groundY, scale);
+    }
+
+    // 5. CRITICAL PASSENGER STOPPING TARGET BOX (Centered around station.distanceMeters)
+    if (Math.abs(centerDistTo) < 140) {
+      const z = Math.max(0.05, 1 - Math.abs(centerDistTo) / 140);
+      const scale = Math.pow(z, 2.3);
+      const groundY = horizonY + (h - horizonY) * scale;
+      const curveOffset = physics.currentCurvature * (1 - z) * 180;
+
+      // Platform stop target on right side
+      const targetPlatX = cx + curveOffset + (195 * scale);
+
+      // Bold yellow/black cross-hatched STOP BOX painted on platform
+      ctx.fillStyle = '#eab308';
+      ctx.fillRect(targetPlatX - 10 * scale, groundY - 26 * scale, 120 * scale, 26 * scale);
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = Math.max(2, 4 * scale);
+      ctx.strokeRect(targetPlatX - 10 * scale, groundY - 26 * scale, 120 * scale, 26 * scale);
+
+      // Overhead illuminated STOP DIAMOND SIGN
+      const markerScale = Math.min(1.4, scale * 1.5);
+      const stopMarkerX = cx + curveOffset + (160 * scale);
+      const stopMarkerY = groundY - 60 * markerScale;
+
+      ctx.fillStyle = '#eab308';
+      ctx.beginPath();
+      ctx.moveTo(stopMarkerX, stopMarkerY - 24 * markerScale);
+      ctx.lineTo(stopMarkerX + 24 * markerScale, stopMarkerY);
+      ctx.lineTo(stopMarkerX, stopMarkerY + 24 * markerScale);
+      ctx.lineTo(stopMarkerX - 24 * markerScale, stopMarkerY);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+
+      ctx.fillStyle = '#0f172a';
+      ctx.font = `900 ${Math.max(8, 12 * markerScale)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('STOP', stopMarkerX, stopMarkerY);
+
+      // Digital Platform Info Display
+      if (scale > 0.3) {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(targetPlatX + 20 * scale, groundY - 105 * scale, 130 * scale, 28 * scale);
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(targetPlatX + 20 * scale, groundY - 105 * scale, 130 * scale, 28 * scale);
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = `bold ${Math.max(7, 10 * scale)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText('STOPPING ZONE', targetPlatX + 85 * scale, groundY - 92 * scale);
+        ctx.fillStyle = '#fde047';
+        ctx.font = `bold ${Math.max(6, 8 * scale)}px monospace`;
+        ctx.fillText(`OFFSET: ${centerDistTo > 0 ? '+' : ''}${Math.round(centerDistTo)}m`, targetPlatX + 85 * scale, groundY - 82 * scale);
+      }
     }
   });
+}
+
+function drawAdvanceStationSign(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  horizonY: number,
+  cx: number,
+  curve: number,
+  distTo: number,
+  stationName: string,
+  distanceBoardNum: number
+) {
+  const z = 1 - distTo / 360;
+  const scale = Math.pow(z, 2.3);
+  const groundY = horizonY + (h - horizonY) * scale;
+  const signX = cx + curve * (1 - z) * 180 + (220 * scale);
+
+  const signW = 100 * scale;
+  const signH = 45 * scale;
+  const postH = 110 * scale;
+
+  // Post
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = Math.max(2, 4 * scale);
+  ctx.beginPath();
+  ctx.moveTo(signX, groundY);
+  ctx.lineTo(signX, groundY - postH);
+  ctx.stroke();
+
+  // Yellow warning board
+  ctx.fillStyle = '#eab308';
+  ctx.fillRect(signX - signW / 2, groundY - postH, signW, signH);
+  ctx.strokeStyle = '#0f172a';
+  ctx.lineWidth = Math.max(1.5, 3 * scale);
+  ctx.strokeRect(signX - signW / 2, groundY - postH, signW, signH);
+
+  if (scale > 0.25) {
+    ctx.fillStyle = '#0f172a';
+    ctx.font = `bold ${Math.max(7, 9 * scale)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(`${distanceBoardNum}m STATION`, signX, groundY - postH + 16 * scale);
+    ctx.font = `bold ${Math.max(6, 8 * scale)}px sans-serif`;
+    ctx.fillText('SLOW TO 40 KM/H', signX, groundY - postH + 32 * scale);
+  }
+}
+
+function drawPlatformCanopyBay(
+  ctx: CanvasRenderingContext2D,
+  platX: number,
+  platY: number,
+  platW: number,
+  scale: number
+) {
+  const canopyH = 75 * scale;
+  const pillarX1 = platX + 25 * scale;
+  const pillarX2 = platX + platW - 20 * scale;
+
+  // Steel Pillars
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = Math.max(2, 5 * scale);
+  ctx.beginPath();
+  ctx.moveTo(pillarX1, platY);
+  ctx.lineTo(pillarX1, platY - canopyH);
+  ctx.moveTo(pillarX2, platY);
+  ctx.lineTo(pillarX2, platY - canopyH);
+  ctx.stroke();
+
+  // Vaulted Arched Roof
+  ctx.fillStyle = '#1e293b';
+  ctx.beginPath();
+  ctx.moveTo(platX, platY - canopyH);
+  ctx.quadraticCurveTo(platX + platW * 0.5, platY - canopyH - 24 * scale, platX + platW + 15 * scale, platY - canopyH);
+  ctx.lineTo(platX + platW + 15 * scale, platY - canopyH + 8 * scale);
+  ctx.quadraticCurveTo(platX + platW * 0.5, platY - canopyH - 16 * scale, platX, platY - canopyH + 8 * scale);
+  ctx.closePath();
+  ctx.fill();
+
+  // Glass skylight tint
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
+  ctx.fillRect(platX + 15 * scale, platY - canopyH - 12 * scale, platW - 20 * scale, 10 * scale);
+}
+
+function drawPlatformLantern(ctx: CanvasRenderingContext2D, x: number, y: number, scale: number) {
+  const poleH = 65 * scale;
+  // Black cast-iron pole
+  ctx.strokeStyle = '#0f172a';
+  ctx.lineWidth = Math.max(1.5, 3 * scale);
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x, y - poleH);
+  ctx.stroke();
+
+  // Glowing amber lamp globe
+  const globeRadius = Math.max(2, 6 * scale);
+  const lampY = y - poleH;
+
+  const glow = ctx.createRadialGradient(x, lampY, 1, x, lampY, globeRadius * 3);
+  glow.addColorStop(0, 'rgba(254, 240, 138, 0.95)');
+  glow.addColorStop(0.5, 'rgba(251, 191, 36, 0.45)');
+  glow.addColorStop(1, 'rgba(0,0,0,0)');
+
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(x, lampY, globeRadius * 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#fef08a';
+  ctx.beginPath();
+  ctx.arc(x, lampY, globeRadius, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawPlatformBench(ctx: CanvasRenderingContext2D, x: number, y: number, scale: number) {
+  const benchW = 35 * scale;
+  const benchH = 14 * scale;
+  ctx.fillStyle = '#065f46'; // Classic dark green station bench
+  ctx.fillRect(x, y - benchH, benchW, benchH);
+  ctx.strokeStyle = '#022c22';
+  ctx.lineWidth = Math.max(1, 2 * scale);
+  ctx.strokeRect(x, y - benchH, benchW, benchH);
+}
+
+function drawLuggageCart(ctx: CanvasRenderingContext2D, x: number, y: number, scale: number) {
+  const cartW = 40 * scale;
+  const cartH = 18 * scale;
+  // Wood cart base
+  ctx.fillStyle = '#78350f';
+  ctx.fillRect(x, y - 8 * scale, cartW, 6 * scale);
+  // Wheels
+  ctx.fillStyle = '#1c1917';
+  ctx.beginPath();
+  ctx.arc(x + 8 * scale, y - 3 * scale, 5 * scale, 0, Math.PI * 2);
+  ctx.arc(x + cartW - 8 * scale, y - 3 * scale, 5 * scale, 0, Math.PI * 2);
+  ctx.fill();
+  // Piled leather suitcases
+  ctx.fillStyle = '#9a3412';
+  ctx.fillRect(x + 4 * scale, y - 8 * scale - cartH, 22 * scale, 12 * scale);
+  ctx.fillStyle = '#b45309';
+  ctx.fillRect(x + 18 * scale, y - 8 * scale - cartH * 0.8, 18 * scale, 10 * scale);
+}
+
+function drawGrandStationBuilding(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  scale: number,
+  name: string,
+  style: string
+) {
+  const buildingW = 220 * scale;
+  const buildingH = 160 * scale;
+
+  // Main Terminal Hall Body
+  const wallColor = style === 'town' ? '#475569' : '#334155';
+  ctx.fillStyle = wallColor;
+  ctx.fillRect(x, y - buildingH, buildingW, buildingH);
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = Math.max(2, 4 * scale);
+  ctx.strokeRect(x, y - buildingH, buildingW, buildingH);
+
+  // Pitched Gabled Slate Roof
+  ctx.fillStyle = '#991b1b'; // Red tile or dark slate
+  ctx.beginPath();
+  ctx.moveTo(x - 12 * scale, y - buildingH);
+  ctx.lineTo(x + buildingW * 0.5, y - buildingH - 65 * scale);
+  ctx.lineTo(x + buildingW + 12 * scale, y - buildingH);
+  ctx.closePath();
+  ctx.fill();
+
+  // Grand Clock Tower
+  const towerW = 48 * scale;
+  const towerH = 110 * scale;
+  const towerX = x + buildingW * 0.5 - towerW / 2;
+  const towerY = y - buildingH - 65 * scale - towerH;
+
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(towerX, towerY, towerW, towerH);
+  ctx.strokeStyle = '#0f172a';
+  ctx.lineWidth = Math.max(2, 3 * scale);
+  ctx.strokeRect(towerX, towerY, towerW, towerH);
+
+  // Copper Spire on Tower
+  ctx.fillStyle = '#059669';
+  ctx.beginPath();
+  ctx.moveTo(towerX - 4 * scale, towerY);
+  ctx.lineTo(towerX + towerW * 0.5, towerY - 50 * scale);
+  ctx.lineTo(towerX + towerW + 4 * scale, towerY);
+  ctx.closePath();
+  ctx.fill();
+
+  // Clock Face
+  ctx.fillStyle = '#fef08a';
+  ctx.beginPath();
+  ctx.arc(towerX + towerW * 0.5, towerY + 35 * scale, 16 * scale, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#0f172a';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Arched Windows in Terminal
+  const winW = 20 * scale;
+  const winH = 34 * scale;
+  ctx.fillStyle = '#fef08a';
+  for (let w = 0; w < 4; w++) {
+    const wx = x + 25 * scale + w * 48 * scale;
+    const wy = y - buildingH * 0.65;
+    ctx.beginPath();
+    ctx.roundRect(wx, wy, winW, winH, [8 * scale, 8 * scale, 0, 0]);
+    ctx.fill();
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  // Grand Entrance Portals
+  ctx.fillStyle = '#0f172a';
+  ctx.beginPath();
+  ctx.roundRect(x + buildingW * 0.5 - 28 * scale, y - 55 * scale, 56 * scale, 55 * scale, [14 * scale, 14 * scale, 0, 0]);
+  ctx.fill();
+
+  // Grand Station Name Board Banner
+  if (scale > 0.22) {
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(x + 15 * scale, y - buildingH - 18 * scale, buildingW - 30 * scale, 28 * scale);
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 15 * scale, y - buildingH - 18 * scale, buildingW - 30 * scale, 28 * scale);
+
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = `bold ${Math.max(8, 13 * scale)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(name.toUpperCase(), x + buildingW * 0.5, y - buildingH + 1 * scale);
+  }
+}
+
+function drawPedestrianFootbridge(
+  ctx: CanvasRenderingContext2D,
+  trackMidX: number,
+  y: number,
+  scale: number
+) {
+  const bridgeSpanW = 420 * scale;
+  const clearanceH = 150 * scale;
+  const bridgeDeckH = 38 * scale;
+  const bx = trackMidX - bridgeSpanW / 2;
+  const by = y - clearanceH;
+
+  // Left & Right Support Towers / Stairwells
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(bx, y - clearanceH, 35 * scale, clearanceH);
+  ctx.fillRect(bx + bridgeSpanW - 35 * scale, y - clearanceH, 35 * scale, clearanceH);
+
+  // Enclosed Glass & Steel Bridge Corridor
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(bx, by, bridgeSpanW, bridgeDeckH);
+  ctx.strokeStyle = '#0f172a';
+  ctx.lineWidth = Math.max(2, 4 * scale);
+  ctx.strokeRect(bx, by, bridgeSpanW, bridgeDeckH);
+
+  // Glass observation windows spanning over track
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.45)';
+  const winCount = 10;
+  const winStep = (bridgeSpanW - 80 * scale) / winCount;
+  for (let i = 0; i < winCount; i++) {
+    ctx.fillRect(bx + 40 * scale + i * winStep + 2 * scale, by + 6 * scale, winStep - 5 * scale, bridgeDeckH - 12 * scale);
+  }
+
+  // Steel Lattice Cross Trusses underneath
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = Math.max(1.5, 3 * scale);
+  for (let i = 0; i < winCount; i++) {
+    ctx.beginPath();
+    ctx.moveTo(bx + 40 * scale + i * winStep, by + bridgeDeckH);
+    ctx.lineTo(bx + 40 * scale + (i + 1) * winStep, by + bridgeDeckH + 14 * scale);
+    ctx.stroke();
+  }
 }
 
 function drawPlatformPassengers(
@@ -1247,9 +1645,9 @@ function drawPlatformPassengers(
   count: number,
   scale: number
 ) {
-  if (scale < 0.25) return;
-  const numToDraw = Math.min(14, Math.max(3, Math.round(count / 2)));
-  const spacing = 10 * scale;
+  if (scale < 0.15) return;
+  const numToDraw = Math.min(10, Math.max(2, count));
+  const spacing = 9 * scale;
   const clothes = ['#0284c7', '#dc2626', '#475569', '#d97706', '#16a34a', '#7c3aed'];
 
   for (let p = 0; p < numToDraw; p++) {
@@ -1264,6 +1662,12 @@ function drawPlatformPassengers(
     ctx.beginPath();
     ctx.arc(px, y - personH * 0.88, 3.2 * scale, 0, Math.PI * 2);
     ctx.fill();
+
+    // Luggage suitcase for some passengers
+    if (p % 2 === 0) {
+      ctx.fillStyle = '#78350f';
+      ctx.fillRect(px + 4 * scale, y - 8 * scale, 5 * scale, 8 * scale);
+    }
   }
 }
 
@@ -1272,32 +1676,60 @@ function drawWeatherAmbiance(
   w: number,
   h: number,
   weather: WeatherType,
-  time: number
+  time: number,
+  headlightMode: HeadlightMode
 ) {
   if (weather === 'rain') {
-    ctx.strokeStyle = 'rgba(203, 213, 225, 0.45)';
-    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = 'rgba(203, 213, 225, 0.55)';
+    ctx.lineWidth = 1.4;
     ctx.beginPath();
-    for (let i = 0; i < 160; i++) {
+    for (let i = 0; i < 170; i++) {
       const rx = (Math.sin(i * 19 + time * 0.002) * 0.5 + 0.5) * w;
-      const ry = ((i * 47 + time * 0.85) % h);
+      const ry = ((i * 47 + time * 0.9) % h);
       ctx.moveTo(rx, ry);
-      ctx.lineTo(rx - 5, ry + 24);
+      ctx.lineTo(rx - 6, ry + 26);
     }
     ctx.stroke();
+
+    // Dark rain atmosphere
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.18)';
+    ctx.fillRect(0, 0, w, h);
   } else if (weather === 'snow') {
     ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-    for (let i = 0; i < 130; i++) {
+    for (let i = 0; i < 140; i++) {
       const sx = ((i * 61 + Math.sin(time * 0.001 + i) * 60) % w);
-      const sy = ((i * 37 + time * 0.16) % h);
+      const sy = ((i * 37 + time * 0.18) % h);
       const size = 1.5 + (i % 3);
       ctx.beginPath();
       ctx.arc(sx, sy, size, 0, Math.PI * 2);
       ctx.fill();
     }
   } else if (weather === 'fog') {
-    ctx.fillStyle = 'rgba(226, 232, 240, 0.26)';
-    ctx.fillRect(0, h * 0.38, w, h * 0.3);
+    // Volumetric dense fog obscurity - depends heavily on headlightMode!
+    let fogOpacity = 0.65; // Off = heavy obscurity
+    if (headlightMode === 'low') {
+      fogOpacity = 0.42; // Low beam = partial penetration
+    } else if (headlightMode === 'high') {
+      fogOpacity = 0.18; // High beam = powerful penetration
+    }
+
+    ctx.fillStyle = `rgba(203, 213, 225, ${fogOpacity})`;
+    ctx.fillRect(0, h * 0.36, w, h * 0.64);
+
+    // If headlights are OFF in dense fog, show a warning
+    if (headlightMode === 'off') {
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+      ctx.fillRect(w * 0.5 - 160, h * 0.28, 320, 32);
+      ctx.strokeStyle = '#eab308';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(w * 0.5 - 160, h * 0.28, 320, 32);
+
+      ctx.fillStyle = '#fde047';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('⚠️ DENSE FOG: SWITCH TO HIGH BEAM [L]', w * 0.5, h * 0.28 + 16);
+    }
   }
 }
 
@@ -1307,7 +1739,7 @@ function drawExternalTrain(
   h: number,
   physics: TrainPhysicsState,
   time: number,
-  headlightsOn: boolean,
+  headlightMode: HeadlightMode,
   hornActive: boolean
 ) {
   const cx = w * 0.5;
@@ -1331,7 +1763,7 @@ function drawExternalTrain(
     ctx.stroke();
   });
 
-  // Locomotive Streamlined Aerodynamic Body
+  // Locomotive Body
   const locoGrad = ctx.createLinearGradient(locoX, locoY, locoX + locoW, locoY);
   locoGrad.addColorStop(0, '#dc2626');
   locoGrad.addColorStop(0.35, '#b91c1c');
@@ -1357,15 +1789,27 @@ function drawExternalTrain(
   ctx.roundRect(locoX + 45, locoY + 28, locoW - 90, 48, [12, 12, 4, 4]);
   ctx.fill();
 
-  if (headlightsOn) {
+  // Twin Headlights with intensity modes
+  if (headlightMode !== 'off') {
+    const isHigh = headlightMode === 'high';
     const light1X = locoX + 50;
     const light2X = locoX + locoW - 50;
     const lightY = locoY + locoH - 52;
 
     ctx.fillStyle = '#fef08a';
     ctx.beginPath();
-    ctx.arc(light1X, lightY, 9, 0, Math.PI * 2);
-    ctx.arc(light2X, lightY, 9, 0, Math.PI * 2);
+    ctx.arc(light1X, lightY, isHigh ? 11 : 8, 0, Math.PI * 2);
+    ctx.arc(light2X, lightY, isHigh ? 11 : 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    const glowRadius = isHigh ? 45 : 25;
+    const glow = ctx.createRadialGradient(light1X, lightY, 3, light1X, lightY, glowRadius);
+    glow.addColorStop(0, 'rgba(254, 240, 138, 0.9)');
+    glow.addColorStop(1, 'rgba(254, 240, 138, 0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(light1X, lightY, glowRadius, 0, Math.PI * 2);
+    ctx.arc(light2X, lightY, glowRadius, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -1385,13 +1829,49 @@ function drawCabWindshield(
   w: number,
   h: number,
   weather: WeatherType,
-  wipersActive: boolean,
+  wiperMode: WiperMode,
+  windshieldMoisture: number,
   time: number
 ) {
   const pillarW = 55;
   const topPillarH = 50;
   const bottomConsoleH = 15;
 
+  // 1. WINDSHIELD MOISTURE / RAIN / SNOW BLUR OVERLAY
+  if (windshieldMoisture > 5) {
+    const blurAlpha = Math.min(0.68, (windshieldMoisture / 100) * 0.68);
+    ctx.fillStyle = `rgba(203, 213, 225, ${blurAlpha})`;
+    ctx.fillRect(pillarW, topPillarH, w - pillarW * 2, h * 0.72);
+
+    // Hundreds of water droplets & smears on glass
+    const dropCount = Math.floor((windshieldMoisture / 100) * 120);
+    ctx.fillStyle = weather === 'snow' ? 'rgba(255, 255, 255, 0.85)' : 'rgba(255, 255, 255, 0.45)';
+    for (let d = 0; d < dropCount; d++) {
+      const dx = ((d * 97) % (w - 180)) + 90;
+      const dy = ((d * 53 + time * 0.04) % (h * 0.65)) + topPillarH + 15;
+      const size = 2 + (d % 4);
+      ctx.beginPath();
+      ctx.arc(dx, dy, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // High moisture warning badge if wipers are OFF
+    if (windshieldMoisture > 60 && wiperMode === 'off') {
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      ctx.fillRect(w * 0.5 - 180, topPillarH + 30, 360, 34);
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(w * 0.5 - 180, topPillarH + 30, 360, 34);
+
+      ctx.fillStyle = '#f87171';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('⚠️ VISIBILITY IMPAIRED · TURN ON WIPERS [P]', w * 0.5, topPillarH + 47);
+    }
+  }
+
+  // 2. CABIN WINDSHIELD PILLARS & CONSOLE FRAME
   ctx.fillStyle = '#0f172a';
   ctx.fillRect(0, 0, w, topPillarH);
 
@@ -1417,35 +1897,34 @@ function drawCabWindshield(
   const centerW = 24;
   ctx.fillRect(w * 0.5 - centerW / 2, topPillarH, centerW, h * 0.7);
 
-  // Rain Drops / Snow on glass
-  if (weather === 'rain' || weather === 'snow') {
-    ctx.fillStyle = weather === 'rain' ? 'rgba(255, 255, 255, 0.4)' : 'rgba(255, 255, 255, 0.8)';
-    for (let d = 0; d < 65; d++) {
-      const dx = ((d * 97) % (w - 160)) + 80;
-      const dy = ((d * 53 + (time * 0.05)) % (h * 0.65)) + topPillarH + 20;
-      const size = weather === 'rain' ? 2.5 + (d % 3) : 3 + (d % 4);
-
-      ctx.beginPath();
-      ctx.arc(dx, dy, size, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  // ANIMATED WIPERS
+  // 3. ANIMATED WIPERS (Off, Intermittent, High)
   const wiperBaseY = h * 0.72;
   const wiperBaseX1 = w * 0.32;
   const wiperBaseX2 = w * 0.68;
   const wiperLen = 220;
 
-  const sweepAngle = wipersActive
-    ? Math.sin(time * 0.005) * (Math.PI / 3.2)
-    : -Math.PI / 4;
+  let isWiping = false;
+  let sweepAngle = -Math.PI / 4; // Parked angle
 
+  if (wiperMode === 'high') {
+    isWiping = true;
+    sweepAngle = Math.sin(time * 0.007) * (Math.PI / 3.2);
+  } else if (wiperMode === 'intermittent') {
+    // Cycles every 2.4s: sweeps for 1.2s then pauses
+    const cycle = (time * 0.001) % 2.4;
+    if (cycle < 1.2) {
+      isWiping = true;
+      sweepAngle = Math.sin((cycle / 1.2) * Math.PI * 2) * (Math.PI / 3.2);
+    }
+  }
+
+  // Draw the two physical wiper blades
   [wiperBaseX1, wiperBaseX2].forEach((bx) => {
     ctx.save();
     ctx.translate(bx, wiperBaseY);
     ctx.rotate(sweepAngle);
 
+    // Wiper steel arm
     ctx.strokeStyle = '#1e293b';
     ctx.lineWidth = 6;
     ctx.beginPath();
@@ -1453,6 +1932,7 @@ function drawCabWindshield(
     ctx.lineTo(0, -wiperLen);
     ctx.stroke();
 
+    // Rubber squeegee blade
     ctx.strokeStyle = '#020617';
     ctx.lineWidth = 4;
     ctx.beginPath();
@@ -1460,6 +1940,13 @@ function drawCabWindshield(
     ctx.lineTo(12, -wiperLen);
     ctx.stroke();
 
+    // Pivot cap
+    ctx.fillStyle = '#0f172a';
+    ctx.beginPath();
+    ctx.arc(0, 0, 9, 0, Math.PI * 2);
+    ctx.fill();
+
     ctx.restore();
   });
 }
+
